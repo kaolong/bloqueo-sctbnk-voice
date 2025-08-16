@@ -1,0 +1,167 @@
+version: "3.1"
+
+# Configuración del bot
+assistant_id: sctbnk_voice_assistant
+user_id: caller
+
+# Configuración de sesión
+session_config:
+  session_expiration_time: 60
+  carry_over_slots_to_new_session: true
+
+# Configuración de respuestas
+responses:
+  utter_greeting:
+    - text: "¡Buenos días! Soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
+
+  utter_ask_card_digits:
+    - text: "Perfecto, te puedo ayudar con eso. Dime, ¿qué tarjeta es la que necesitas bloquear? Puedes darme los últimos 4 dígitos."
+
+  utter_ask_digitos:
+    - text: "Por favor, proporciona los últimos 4 dígitos de la tarjeta que quieres bloquear."
+
+  utter_confirm_blocking:
+    - text: "Entiendo, voy a generar un ticket para el bloqueo de tu tarjeta. ¿Te parece bien proceder?"
+
+  utter_ask_confirmar_bloqueo:
+    - text: "¿Confirmas que quieres proceder con el bloqueo de tu tarjeta?"
+
+  utter_collect_digitos:
+    - text: "Por favor, proporciona los últimos 4 dígitos de la tarjeta que quieres bloquear."
+
+  utter_collect_confirmar_bloqueo:
+    - text: "¿Confirmas que quieres proceder con el bloqueo de tu tarjeta?"
+
+  utter_ticket_created:
+    - text: "Excelente, se ha generado el ticket número {ticket_number}. En instantes un ejecutivo realizará el bloqueo de tu tarjeta."
+
+  utter_goodbye:
+    - text: "Gracias por contactarte con nosotros. ¡Que tengas un excelente día!"
+
+  utter_card_not_found:
+    - text: "No encontré una tarjeta con esos últimos 4 dígitos. ¿Podrías verificar y proporcionarme los dígitos correctos?"
+
+  utter_fallback:
+    - text: "Lo siento, no pude entenderte bien. Te voy a conectar con un ejecutivo que te ayudará personalmente."
+
+  utter_transfer_cancelled:
+    - text: "Tu solicitud de bloqueo ha sido cancelada."
+
+# Configuración de entidades
+entities:
+  - digitos
+  - ticket_number
+  - card_type
+  - confirmar_bloqueo
+  - customer_id
+  - customer_full_name
+  - customer_phone
+  - available_cards
+  - selected_card
+  - card_blocked
+  - case_number
+  - blocked_card_name
+
+# Configuración de slots
+slots:
+  digitos:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: digitos
+  ticket_number:
+    type: text
+    mappings:
+      - type: controlled
+  card_type:
+    type: text
+    mappings:
+      - type: from_llm
+  tarjeta_encontrada:
+    type: bool
+    mappings:
+      - type: controlled
+  confirmar_bloqueo:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: confirmar_bloqueo
+  ticket_created:
+    type: bool
+    mappings:
+      - type: controlled
+  customer_id:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: customer_id
+  customer_full_name:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: customer_full_name
+  customer_phone:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: customer_phone
+  available_cards:
+    type: list
+    mappings:
+      - type: from_entity
+        entity: available_cards
+  selected_card:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: selected_card
+  card_blocked:
+    type: bool
+    mappings:
+      - type: from_entity
+        entity: card_blocked
+  case_number:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: case_number
+  blocked_card_name:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: blocked_card_name
+
+# Configuración de intents
+intents:
+  - saludar
+  - bloquear_tarjeta
+  - proporcionar_digitos
+  - confirmar_bloqueo
+  - confirmar_generacion
+  - despedida
+  - negar
+  - aclarar
+  - fallback
+  - transfer_money
+  - digitos
+
+# Configuración de acciones
+actions:
+  - utter_greeting
+  - utter_ask_card_digits
+  - utter_confirm_blocking
+  - utter_ticket_created
+  - utter_goodbye
+  - utter_card_not_found
+  - utter_fallback
+  - utter_transfer_cancelled
+  - utter_ask_digitos
+  - utter_ask_confirmar_bloqueo
+  - utter_collect_digitos
+  - utter_collect_confirmar_bloqueo
+  - action_saludo_contextual
+  - action_solicitar_digitos
+  - action_verificar_tarjeta
+  - action_confirmar_bloqueo
+  - action_generar_ticket
+  - action_despedida_contextual

@@ -1,0 +1,161 @@
+{
+  "description": "Studio Flow para SCTBNK - Bloqueo de Tarjetas",
+  "states": [
+    {
+      "name": "Trigger",
+      "type": "trigger",
+      "transitions": [
+        {
+          "event": "incoming",
+          "next": "RasaWebhook"
+        }
+      ]
+    },
+    {
+      "name": "RasaWebhook",
+      "type": "http-request",
+      "properties": {
+        "method": "POST",
+        "url": "https://your-domain.com/webhooks/rasa/webhook",
+        "body": "{{flow.variables}}",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{env.RASA_WEBHOOK_TOKEN}}"
+        }
+      },
+      "transitions": [
+        {
+          "event": "success",
+          "next": "ProcessResponse"
+        },
+        {
+          "event": "fail",
+          "next": "FallbackToHuman"
+        }
+      ]
+    },
+    {
+      "name": "ProcessResponse",
+      "type": "function",
+      "properties": {
+        "body": "const response = event.Body; const data = JSON.parse(response); if (data.text) { flow.set('response_text', data.text); } return {};"
+      },
+      "transitions": [
+        {
+          "event": "success",
+          "next": "TextToSpeech"
+        }
+      ]
+    },
+    {
+      "name": "TextToSpeech",
+      "type": "text-to-speech",
+      "properties": {
+        "text": "{{flow.variables.response_text}}",
+        "voice": "es-MX-Neural2-F",
+        "language": "es-MX"
+      },
+      "transitions": [
+        {
+          "event": "success",
+          "next": "WaitForInput"
+        }
+      ]
+    },
+    {
+      "name": "WaitForInput",
+      "type": "listen",
+      "properties": {
+        "input": "speech",
+        "language": "es-MX",
+        "speech_timeout": "auto",
+        "speech_model": "es-MX"
+      },
+      "transitions": [
+        {
+          "event": "speech",
+          "next": "SendToRasa"
+        },
+        {
+          "event": "timeout",
+          "next": "TimeoutResponse"
+        }
+      ]
+    },
+    {
+      "name": "SendToRasa",
+      "type": "http-request",
+      "properties": {
+        "method": "POST",
+        "url": "https://your-domain.com/webhooks/rasa/webhook",
+        "body": "{\"message\": \"{{event.SpeechResult}}\", \"sender_id\": \"{{flow.variables.caller_number}}\"}",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{env.RASA_WEBHOOK_TOKEN}}"
+        }
+      },
+      "transitions": [
+        {
+          "event": "success",
+          "next": "ProcessResponse"
+        },
+        {
+          "event": "fail",
+          "next": "FallbackToHuman"
+        }
+      ]
+    },
+    {
+      "name": "TimeoutResponse",
+      "type": "text-to-speech",
+      "properties": {
+        "text": "No escuché tu respuesta. ¿Podrías repetir lo que necesitas?",
+        "voice": "es-MX-Neural2-F",
+        "language": "es-MX"
+      },
+      "transitions": [
+        {
+          "event": "success",
+          "next": "WaitForInput"
+        }
+      ]
+    },
+    {
+      "name": "FallbackToHuman",
+      "type": "text-to-speech",
+      "properties": {
+        "text": "Lo siento, estoy teniendo problemas técnicos. Te voy a conectar con un ejecutivo que te ayudará personalmente.",
+        "voice": "es-MX-Neural2-F",
+        "language": "es-MX"
+      },
+      "transitions": [
+        {
+          "event": "success",
+          "next": "ConnectToHuman"
+        }
+      ]
+    },
+    {
+      "name": "ConnectToHuman",
+      "type": "connect",
+      "properties": {
+        "to": "{{env.SUPPORT_PHONE_NUMBER}}",
+        "from": "{{env.TWILIO_PHONE_NUMBER}}"
+      },
+      "transitions": [
+        {
+          "event": "call-completed",
+          "next": "EndCall"
+        }
+      ]
+    },
+    {
+      "name": "EndCall",
+      "type": "end"
+    }
+  ],
+  "initial_state": "Trigger",
+  "flags": {
+    "allow_concurrent_calls": true
+  }
+}

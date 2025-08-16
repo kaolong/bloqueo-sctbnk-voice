@@ -1,0 +1,32 @@
+# Endpoints para el proyecto SCTBNK
+# Configuración de producción
+
+# Action Server
+action_endpoint:
+  url: "http://localhost:5055/webhook"
+
+# Webhook para Twilio
+webhooks:
+  twilio:
+    url: "https://your-domain.com/webhooks/twilio/webhook"
+    webhook_type: "twilio"
+    webhook_id: "twilio_webhook"
+
+# Configuración para LLMs externos (CALM)
+llm_endpoints:
+  openai:
+    url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-3.5-turbo"
+    temperature: 0.1
+    max_completion_tokens: 150
+
+# Configuración de base de datos
+database:
+  url: "${DATABASE_URL}"
+  db: "sctbnk_cards"
+
+# Configuración de Freshdesk
+freshdesk:
+  url: "${FRESHDESK_API_URL}"
+  api_key: "${FRESHDESK_API_KEY}"
