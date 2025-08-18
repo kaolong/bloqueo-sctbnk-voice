@@ -3,6 +3,18 @@
 # Script para probar la conversación completa del bot de bloqueo de tarjetas
 # Genera call_sid únicos automáticamente para evitar conflictos de contexto
 # Formatea el XML para mejor legibilidad
+# Incluye testing de identificación de clientes por número de teléfono
+
+# Función para mostrar uso del script
+show_usage() {
+    echo "Uso: $0 [phone_number]"
+    echo ""
+    echo "Ejemplos:"
+    echo "  $0                    # Sin número específico (usará +56982221070)"
+    echo "  $0 +56982221070      # Con número específico"
+    echo "  $0 +56912345678      # Con otro número para probar cliente no encontrado"
+    echo ""
+}
 
 # Función para formatear XML de manera legible
 pretty_print() {
@@ -26,12 +38,16 @@ except:
     fi
 }
 
+# Procesar argumentos
+PHONE_NUMBER=${1:-"+56982221070"}
+
 # Generar call_sid único basado en timestamp y número aleatorio
 TIMESTAMP=$(date +%s)
 RANDOM_NUM=$((RANDOM % 1000))
 CALL_SID="TEST_${TIMESTAMP}_${RANDOM_NUM}"
 
 echo "🎯 Iniciando prueba con call_sid único: ${CALL_SID}"
+echo "📱 Número de teléfono: ${PHONE_NUMBER}"
 echo "⏰ Timestamp: $(date)"
 echo ""
 
@@ -39,7 +55,7 @@ echo ""
 echo "📞 1. Llamada inicial..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 RESPONSE=$(curl -s -X POST "http://localhost:5000/webhook/twilio/voice" \
-  -d "CallSid=${CALL_SID}&From=+56982221070&To=+1234567890" \
+  -d "CallSid=${CALL_SID}&From=${PHONE_NUMBER}&To=+1234567890" \
   -H "Content-Type: application/x-www-form-urlencoded")
 pretty_print "$RESPONSE"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -89,4 +105,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "✅ Prueba de conversación completada!"
 echo "🎯 Call SID utilizado: ${CALL_SID}"
+echo "📱 Número de teléfono: ${PHONE_NUMBER}"
 echo "⏰ Finalizado: $(date)"
+echo ""
+echo "💡 Para probar con diferentes números:"
+echo "   ./test_conversation.sh +56982221070  # Cliente conocido"
+echo "   ./test_conversation.sh +56912345678  # Cliente no encontrado"

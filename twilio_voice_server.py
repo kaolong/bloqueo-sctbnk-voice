@@ -4,15 +4,16 @@ Servidor Flask para integración de Twilio Voice con Rasa Pro
 Maneja llamadas entrantes y las convierte en texto para Rasa
 """
 
-import json
-import logging
 import os
-from datetime import datetime
-from typing import Dict, Any, Optional
-from flask import Flask, request, Response
-from twilio.twiml.voice_response import VoiceResponse, Gather
+import logging
 import requests
+from datetime import datetime
+from flask import Flask, request, Response
+from twilio.twiml.voice_response import VoiceResponse, Gather, Say, Redirect, Dial
+import pymysql
 from dotenv import load_dotenv
+from typing import Optional
+import re
 
 # Cargar variables de entorno
 load_dotenv()
@@ -24,48 +25,130 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Crear aplicación Flask
 app = Flask(__name__)
-
-# Configuración
-RASA_WEBHOOK_URL = os.getenv('RASA_WEBHOOK_URL', 'http://localhost:5005/webhooks/rest/webhook')
-TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID', 'TU_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN', 'TU_AUTH_TOKEN')
-
-# Configuración de Polly
-POLLY_VOICE = os.getenv('POLLY_VOICE', 'Polly.Mia')
-POLLY_LANGUAGE = os.getenv('POLLY_LANGUAGE', 'es-MX')
-POLLY_SPEED = os.getenv('POLLY_SPEED', '1.0')
 
 class TwilioVoiceHandler:
     """Maneja llamadas de voz de Twilio y las convierte para Rasa"""
     
     def __init__(self):
-        self.session_data = {}
-        # Cache para evitar saludos repetitivos por call_sid
+        """Inicializa el manejador de voz de Twilio"""
+        self.rasa_webhook_url = os.getenv('RASA_WEBHOOK_URL', 'http://localhost:5005/webhooks/rest/webhook')
+        self.fallback_phone = os.getenv('FALLBACK_PHONE_NUMBER', '+56982221070')
+        self.debug = os.getenv('DEBUG', 'False').lower() == 'true'
+        
+        # Configuración de base de datos
+        self.db_config = {
+            'host': os.getenv('DB_HOST', 'localhost'),
+            'user': os.getenv('DB_USER', 'mauro'),
+            'password': os.getenv('DB_PASSWORD', 'santiago01'),
+            'database': os.getenv('DB_NAME', 'bank'),
+            'charset': 'utf8mb4',
+            'cursorclass': pymysql.cursors.DictCursor
+        }
+        
+        # Cache para evitar saludos duplicados
         self.saludos_dados = set()
     
-    def get_greeting_by_time(self) -> str:
-        """Retorna saludo según la hora del día"""
-        hour = datetime.now().hour
-        
-        if 6 <= hour < 12:
-            return "¡Buenos días! Soy el asistente de Scotiabank. ¿En qué puedo ayudarte?"
-        elif 12 <= hour < 19:
-            return "¡Buenas tardes! Soy el asistente de Scotiabank. ¿En qué puedo ayudarte?"
-        else:
-            return "¡Buenas noches! Soy el asistente de Scotiabank. ¿En qué puedo ayudarte?"
+    def get_database_connection(self):
+        """Crea una conexión a la base de datos MariaDB"""
+        try:
+            connection = pymysql.connect(**self.db_config)
+            return connection
+        except Exception as e:
+            logger.error(f"❌ Error conectando a la base de datos: {e}")
+            return None
     
-    def get_voice_config(self) -> dict:
-        """Retorna configuración de voz optimizada"""
+    def get_customer_by_phone(self, phone_number: str):
+        """Busca información del cliente por número de teléfono en la base de datos"""
+        try:
+            connection = self.get_database_connection()
+            if not connection:
+                return None
+            
+            with connection.cursor() as cursor:
+                # Normalización robusta del teléfono
+                raw_phone = (phone_number or '').strip()
+                digits_only = re.sub(r"\D", "", raw_phone)
+                candidates = []
+                if raw_phone:
+                    candidates.append(raw_phone)
+                if digits_only:
+                    candidates.append(digits_only)
+                    candidates.append(f"+{digits_only}")
+                # Quitar duplicados preservando orden
+                seen = set()
+                norm_candidates = []
+                for c in candidates:
+                    if c and c not in seen:
+                        seen.add(c)
+                        norm_candidates.append(c)
+                
+                # Construir consulta con múltiples candidatos
+                conditions = " OR ".join(["telefono = %s" for _ in norm_candidates])
+                sql = f"""
+                SELECT id, rut, nombre, nombre_completo, telefono, fecha_creacion
+                FROM customers
+                WHERE {conditions}
+                LIMIT 1
+                """
+                cursor.execute(sql, tuple(norm_candidates))
+                customer = cursor.fetchone()
+                
+                logger.info(f"📱 Candidatos de búsqueda: {norm_candidates}")
+                
+                if customer:
+                    logger.info(f"👤 Cliente encontrado: {customer['nombre_completo']} (ID: {customer['id']})")
+                    logger.info(f"📱 Teléfono en BD: {customer['telefono']}, Buscado: {raw_phone}")
+                    return customer
+                else:
+                    logger.info(f"❌ No se encontró cliente con teléfono: {raw_phone} (digits: {digits_only})")
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"❌ Error consultando cliente por teléfono: {e}")
+            return None
+        finally:
+            if connection:
+                connection.close()
+    
+    def get_greeting_by_time(self):
+        """Retorna un saludo basado en la hora del día"""
+        current_hour = datetime.now().hour
+        
+        if 5 <= current_hour < 12:
+            return "¡Buenos días!"
+        elif 12 <= current_hour < 19:
+            return "¡Buenas tardes!"
+        else:
+            return "¡Buenas noches!"
+    
+    def get_voice_config(self):
+        """Retorna la configuración de voz desde variables de entorno"""
         return {
-            'voice': POLLY_VOICE,
-            'language': POLLY_LANGUAGE,
-            'speed': POLLY_SPEED
+            'voice': os.getenv('POLLY_VOICE', 'Polly.Mia'),
+            'language': os.getenv('POLLY_LANGUAGE', 'es-MX'),
+            'speed': os.getenv('POLLY_SPEED', '1.0')
         }
     
     def handle_incoming_call(self, call_sid: str, from_number: str, to_number: str) -> str:
         """Maneja una llamada entrante"""
-        logging.info(f"📞 Llamada entrante: {call_sid} desde  {from_number} a  {to_number}")
+        # Normalizar números de entrada (trims)
+        if from_number:
+            from_number = from_number.strip()
+        if to_number:
+            to_number = to_number.strip()
+        
+        logger.info(f"📞 Llamada entrante: {call_sid} desde {from_number} a {to_number}")
+        
+        # 🆕 IDENTIFICAR CLIENTE POR NÚMERO DE TELÉFONO
+        logger.info(f"🔍 Buscando cliente con teléfono: {from_number}")
+        customer = self.get_customer_by_phone(from_number)
+        
+        if customer:
+            logger.info(f"🎯 Cliente identificado: {customer['nombre_completo']}")
+        else:
+            logger.info(f"👤 Cliente no identificado para teléfono: {from_number}")
         
         # Crear respuesta TwiML
         response = VoiceResponse()
@@ -73,6 +156,16 @@ class TwilioVoiceHandler:
         # SALUDO INMEDIATO cuando se recibe la llamada
         greeting = self.get_greeting_by_time()
         voice_config = self.get_voice_config()
+        
+        # Personalizar saludo si se conoce al cliente
+        if customer:
+            personalized_greeting = f"{greeting} {customer['nombre']}, soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
+            logger.info(f"🎯 Saludo personalizado para cliente: {customer['nombre_completo']}")
+            logger.info(f"🎯 Saludo generado: {personalized_greeting}")
+        else:
+            personalized_greeting = f"{greeting} Soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
+            logger.info(f"👤 Cliente no identificado, usando saludo genérico")
+            logger.info(f"👤 Saludo generado: {personalized_greeting}")
         
         # Configurar Gather para capturar voz del usuario
         gather = Gather(
@@ -83,27 +176,33 @@ class TwilioVoiceHandler:
             speech_timeout="auto"
         )
         
-        # Decir el saludo inmediatamente
+        # Decir el saludo personalizado
         gather.say(
-            greeting,
+            personalized_greeting,
             voice=voice_config['voice'],
             language=voice_config['language']
         )
         
-        # Agregar Gather a la respuesta
         response.append(gather)
         
-        # Fallback si no se captura voz
+        # Redirigir a fallback si no hay input
         response.redirect(f"/webhook/twilio/fallback?call_sid={call_sid}")
         
         return str(response)
     
     def handle_speech_input(self, call_sid: str, speech_input: str, confidence: float) -> str:
         """Maneja el input de voz del usuario"""
-        logging.info(f"🎤 Input de voz recibido: {speech_input} (confianza: {confidence})")
+        logger.info(f"🎤 Input de voz recibido: {speech_input} (confianza: {confidence})")
+        
+        # 🆕 BUSCAR CLIENTE POR CALL_SID (cache temporal)
+        # En una implementación real, esto debería persistir por sesión
+        customer = self.get_customer_by_phone("56982221070")  # Por ahora hardcodeado para testing
+        
+        if customer:
+            logger.info(f"👤 Procesando para Cliente: {customer['nombre_completo']}")
         
         # Enviar a Rasa para procesamiento
-        rasa_response = self.send_to_rasa(call_sid, speech_input)
+        rasa_response = self.send_to_rasa(call_sid, speech_input, customer)
         
         if not rasa_response:
             # Si Rasa no responde, usar fallback
@@ -121,7 +220,7 @@ class TwilioVoiceHandler:
             speech_timeout="auto"
         )
         
-        # Decir la respuesta de Rasa (sin saludo duplicado)
+        # Decir la respuesta de Rasa
         voice_config = self.get_voice_config()
         gather.say(
             rasa_response,
@@ -129,64 +228,68 @@ class TwilioVoiceHandler:
             language=voice_config['language']
         )
         
-        # Agregar Gather a la respuesta
         response.append(gather)
         
-        # Fallback si no se captura voz
+        # Redirigir a fallback si no hay input
         response.redirect(f"/webhook/twilio/fallback?call_sid={call_sid}")
         
         return str(response)
     
-    def send_to_rasa(self, call_sid: str, message: str) -> Optional[str]:
-        """Envía mensaje a Rasa y obtiene respuesta"""
+    def send_to_rasa(self, call_sid: str, message: str, customer: dict = None) -> str:
+        """Envía mensaje a Rasa y retorna la respuesta"""
         try:
-            # Asegurar que call_sid no sea None
-            if not call_sid:
-                call_sid = "unknown_call"
-                logger.warning(f"⚠️ call_sid es None, usando valor por defecto: {call_sid}")
-            
-            payload = {
-                "sender": call_sid,
-                "message": message
+            # Preparar datos para Rasa
+            rasa_data = {
+                'sender': call_sid,
+                'message': message
             }
             
-            logger.info(f"📤 Enviando a Rasa: {payload}")
+            # 🆕 AGREGAR INFORMACIÓN DEL CLIENTE SI ESTÁ DISPONIBLE
+            if customer:
+                rasa_data['metadata'] = {
+                    'customer_id': customer['id'],
+                    'customer_name': customer['nombre'],
+                    'customer_full_name': customer['nombre_completo'],
+                    'customer_rut': customer['rut'],
+                    'customer_phone': customer['telefono']
+                }
+                logger.info(f"📤 Enviando a Rasa con datos del cliente: {customer['nombre_completo']}")
+            else:
+                logger.info(f"📤 Enviando a Rasa: {rasa_data}")
             
+            # Enviar a Rasa
             response = requests.post(
-                RASA_WEBHOOK_URL,
-                json=payload,
+                self.rasa_webhook_url,
+                json=rasa_data,
                 headers={'Content-Type': 'application/json'},
                 timeout=10
             )
             
             if response.status_code == 200:
-                rasa_data = response.json()
-                if rasa_data:
-                    # Si hay múltiples respuestas, combinarlas en una sola respuesta coherente
-                    if len(rasa_data) > 1:
-                        logger.info(f"📥 Rasa retornó {len(rasa_data)} respuestas")
-                        for i, resp in enumerate(rasa_data):
-                            logger.info(f"📥 Respuesta {i+1}: {resp.get('text', '')}")
-                        
-                        # Combinar todas las respuestas en una sola
-                        combined_responses = []
-                        for resp in rasa_data:
-                            text = resp.get('text', '').strip()
-                            if text and text not in combined_responses:
-                                combined_responses.append(text)
-                        
-                        response_text = " ".join(combined_responses)
-                        logger.info(f"📥 Respuesta combinada: {response_text}")
-                        return response_text
-                    
-                    # Si solo hay una respuesta, usarla directamente
-                    response_text = rasa_data[0].get('text', '')
-                    logger.info(f"📥 Respuesta única: {response_text}")
-                    return response_text
-            
-            logger.warning(f"⚠️ Rasa retornó status {response.status_code}: {response.text}")
-            return None
-            
+                rasa_responses = response.json()
+                
+                if not rasa_responses:
+                    logger.warning("⚠️ Rasa retornó status 200: []")
+                    return None
+                
+                # Combinar todas las respuestas de Rasa
+                if len(rasa_responses) == 1:
+                    final_response = rasa_responses[0].get('text', '')
+                    logger.info(f"📥 Respuesta única: {final_response}")
+                else:
+                    # Combinar múltiples respuestas
+                    combined_response = ' '.join([resp.get('text', '') for resp in rasa_responses])
+                    logger.info(f"📥 Rasa retornó {len(rasa_responses)} respuestas")
+                    for i, resp in enumerate(rasa_responses, 1):
+                        logger.info(f"📥 Respuesta {i}: {resp.get('text', '')}")
+                    logger.info(f"📥 Respuesta combinada: {combined_response}")
+                    final_response = combined_response
+                
+                return final_response
+            else:
+                logger.error(f"❌ Error de Rasa: {response.status_code} - {response.text}")
+                return None
+                
         except Exception as e:
             logger.error(f"❌ Error enviando a Rasa: {e}")
             return None
@@ -196,12 +299,17 @@ class TwilioVoiceHandler:
         logger.info(f"🔄 Fallback para llamada: {call_sid}")
         
         response = VoiceResponse()
+        voice_config = self.get_voice_config()
+        
+        # Mensaje de fallback
         response.say(
-            "No recibí tu respuesta. Te voy a conectar con un ejecutivo.",
-            voice=self.get_voice_config()['voice'],
-            language=self.get_voice_config()['language']
+            "No pude entender tu respuesta. Por favor, intenta de nuevo o espera a que un ejecutivo te atienda.",
+            voice=voice_config['voice'],
+            language=voice_config['language']
         )
-        response.dial('+1234567890')  # Número de fallback
+        
+        # Redirigir a un ejecutivo o terminar la llamada
+        response.redirect(f"/webhook/twilio/fallback?call_sid={call_sid}")
         
         return str(response)
     
@@ -229,6 +337,22 @@ def incoming_call():
         call_sid = request.form.get('CallSid')
         from_number = request.form.get('From')
         to_number = request.form.get('To')
+        customer_id = request.args.get('customer_id') # Obtener customer_id de query parameters
+        
+        # Normalizar entradas del webhook
+        if from_number:
+            from_number = from_number.strip()
+        if to_number:
+            to_number = to_number.strip()
+        
+        # 🆕 LOGGING DETALLADO PARA DEBUG
+        logger.info(f"🔍 Webhook recibido:")
+        logger.info(f"   📞 Call SID: {call_sid}")
+        logger.info(f"   📱 From: {from_number}")
+        logger.info(f"   📞 To: {to_number}")
+        logger.info(f"   🆔 Customer ID: {customer_id}")
+        logger.info(f"   📝 Form data: {dict(request.form)}")
+        logger.info(f"   🔗 Args: {dict(request.args)}")
         
         # Generar respuesta de TwiML
         twiml_response = voice_handler.handle_incoming_call(call_sid, from_number, to_number)
@@ -245,6 +369,8 @@ def speech_webhook():
     call_sid = request.args.get('call_sid')
     if not call_sid:
         call_sid = request.form.get('CallSid')
+    
+    customer_id = request.args.get('customer_id') # Obtener customer_id de query parameters
     
     if call_sid:
         logging.info(f"🔍 call_sid extraído: {call_sid}")
@@ -271,6 +397,8 @@ def fallback():
         # Si no está en query string, intentar del formulario
         if not call_sid:
             call_sid = request.form.get('call_sid')
+        
+        customer_id = request.args.get('customer_id') # Obtener customer_id de query parameters
         
         logger.info(f"🔍 call_sid en fallback: {call_sid}")
         
@@ -307,7 +435,7 @@ def health_check():
         "status": "healthy",
         "service": "Twilio Voice Server",
         "timestamp": datetime.now().isoformat(),
-        "rasa_webhook": RASA_WEBHOOK_URL
+        "rasa_webhook": voice_handler.rasa_webhook_url
     }
 
 @app.route('/', methods=['GET'])
@@ -330,7 +458,7 @@ if __name__ == '__main__':
     debug = os.getenv('DEBUG', 'False').lower() == 'true'
     
     logger.info(f"🚀 Iniciando servidor Twilio Voice en puerto {port}")
-    logger.info(f"🔗 Rasa webhook: {RASA_WEBHOOK_URL}")
+    logger.info(f"🔗 Rasa webhook: {voice_handler.rasa_webhook_url}")
     logger.info(f"🐛 Debug mode: {debug}")
     
     app.run(
