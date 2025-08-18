@@ -64,6 +64,10 @@ entities:
 
 # Configuración de slots
 slots:
+  saludo_dado:
+    type: bool
+    mappings:
+      - type: controlled
   digitos:
     type: text
     mappings:

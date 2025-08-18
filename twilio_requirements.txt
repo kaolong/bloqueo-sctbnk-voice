@@ -1,0 +1,29 @@
+# ========================================
+# DEPENDENCIAS PARA SERVIDOR TWILIO VOICE
+# ========================================
+
+# Framework web
+Flask==2.3.3
+
+# Cliente HTTP para comunicación con Rasa
+requests==2.31.0
+
+# SDK de Twilio para TwiML
+twilio==8.10.0
+
+# Manejo de variables de entorno
+python-dotenv==1.1.0
+
+# Servidor WSGI para producción
+gunicorn==21.2.0
+
+# ========================================
+# DEPENDENCIAS DE DESARROLLO (OPCIONAL)
+# ========================================
+
+# Para desarrollo local
+flask-cors==4.0.0
+
+# Para testing
+pytest==7.4.2
+pytest-flask==1.2.0

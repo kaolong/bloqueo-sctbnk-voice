@@ -25,6 +25,13 @@ class ActionSaludoContextual(Action):
             tracker: Tracker,
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
+        # Verificar si ya se ha saludado en esta conversación
+        saludo_ya_dado = tracker.get_slot("saludo_dado")
+        
+        if saludo_ya_dado:
+            # Si ya se saludó, no mostrar saludo repetitivo
+            return []
+        
         current_hour = datetime.now().hour
         
         if 5 <= current_hour < 12:
@@ -35,7 +42,9 @@ class ActionSaludoContextual(Action):
             greeting = "¡Buenas noches! Soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
         
         dispatcher.utter_message(text=greeting)
-        return []
+        
+        # Marcar que ya se ha saludado
+        return [SlotSet("saludo_dado", True)]
 
 class ActionSolicitarDigitos(Action):
     """Acción para solicitar los últimos 4 dígitos de la tarjeta"""
