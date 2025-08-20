@@ -161,6 +161,23 @@ class TwilioVoiceHandler:
             logger.info(f"🎯 Cliente identificado: {customer['nombre_completo']}")
         else:
             logger.info(f"👤 Cliente no identificado para teléfono: {from_number}")
+            # Rechazar llamada de usuario desconocido
+            response = VoiceResponse()
+            voice_config = self.get_voice_config()
+            
+            rejection_message = "Lo siento, no puedo atenderte. Tu número de teléfono no está registrado en nuestro sistema. Por favor, contacta a un ejecutivo para verificar tu información. Gracias."
+            
+            response.say(
+                rejection_message,
+                voice=voice_config['voice'],
+                language=voice_config['language']
+            )
+            
+            # Terminar la llamada
+            response.hangup()
+            
+            logger.info(f"🚫 Llamada rechazada para usuario desconocido: {from_number}")
+            return str(response)
         
         # Crear respuesta TwiML
         response = VoiceResponse()
@@ -219,8 +236,42 @@ class TwilioVoiceHandler:
                 logger.info(f"👤 Procesando para Cliente: {customer['nombre_completo']}")
             else:
                 logger.info(f"👤 Cliente no encontrado para teléfono: {from_number}")
+                # Rechazar solicitud de usuario desconocido
+                response = VoiceResponse()
+                voice_config = self.get_voice_config()
+                
+                rejection_message = "Lo siento, no puedo procesar tu solicitud. Tu número de teléfono no está registrado en nuestro sistema. Por favor, contacta a un ejecutivo para verificar tu información. Gracias."
+                
+                response.say(
+                    rejection_message,
+                    voice=voice_config['voice'],
+                    language=voice_config['language']
+                )
+                
+                # Terminar la llamada
+                response.hangup()
+                
+                logger.info(f"🚫 Solicitud rechazada para usuario desconocido: {from_number}")
+                return str(response)
         else:
             logger.warning("⚠️ No se encontró número de teléfono en cache para call_sid: {call_sid}")
+            # Rechazar solicitud sin número de teléfono
+            response = VoiceResponse()
+            voice_config = self.get_voice_config()
+            
+            rejection_message = "Lo siento, no puedo procesar tu solicitud. No se pudo identificar tu número de teléfono. Por favor, contacta a un ejecutivo. Gracias."
+            
+            response.say(
+                rejection_message,
+                voice=voice_config['voice'],
+                language=voice_config['language']
+            )
+            
+            # Terminar la llamada
+            response.hangup()
+            
+            logger.warning(f"🚫 Solicitud rechazada sin número de teléfono para call_sid: {call_sid}")
+            return str(response)
         
         # Enviar a Rasa para procesamiento
         rasa_response = self.send_to_rasa(call_sid, speech_input, customer)
