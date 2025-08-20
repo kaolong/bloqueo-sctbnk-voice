@@ -1,3 +1,4 @@
+
 from typing import Any, Text, Dict, List
 from rasa_sdk import Action, Tracker
 from rasa_sdk.executor import CollectingDispatcher
@@ -15,6 +16,95 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+class ActionSaludoInteligente(Action):
+    """Acción inteligente para saludar solo cuando sea necesario"""
+    
+    def name(self) -> Text:
+        return "action_saludo_inteligente"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        # Verificar si ya se ha saludado en esta conversación
+        saludo_ya_dado = tracker.get_slot("saludo_dado")
+        
+        # Verificar si ya hay mensajes del bot en la conversación (indicando que no es el primer turno)
+        bot_events = [e for e in tracker.events if e.get('event') == 'bot']
+        if len(bot_events) > 0:  # Ya hay mensajes del bot
+            logger.info(f"Ya hay {len(bot_events)} mensajes del bot, no mostrar saludo repetitivo")
+            return []
+        
+        if saludo_ya_dado:
+            # Si ya se saludó, no mostrar saludo repetitivo
+            logger.info("Saludo ya dado, no mostrar saludo repetitivo")
+            return []
+        
+        # Verificar si el usuario es desconocido (no tiene customer_id en metadata)
+        # Para usuarios desconocidos, ser más restrictivo con el saludo
+        metadata = tracker.get_slot("metadata") or {}
+        customer_id = metadata.get("customer_id")
+        
+        if not customer_id:
+            # Usuario desconocido, solo saludar en el primer turno absoluto
+            user_events = [e for e in tracker.events if e.get('event') == 'user']
+            if len(user_events) > 1:  # Ya no es el primer turno
+                logger.info("Usuario desconocido - Ya no es el primer turno, no mostrar saludo")
+                return []
+        
+        current_hour = datetime.now().hour
+        
+        if 5 <= current_hour < 12:
+            greeting = "¡Buenos días! Soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
+        elif 12 <= current_hour < 19:
+            greeting = "¡Buenas tardes! Soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
+        else:
+            greeting = "¡Buenas noches! Soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
+        
+        dispatcher.utter_message(text=greeting)
+        
+        # Marcar que ya se ha saludado
+        return [SlotSet("saludo_dado", True)]
+
+class ActionSaludoUsuarioDesconocido(Action):
+    """Acción para saludar solo a usuarios desconocidos cuando sea necesario"""
+    
+    def name(self) -> Text:
+        return "action_saludo_usuario_desconocido"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        # Verificar si ya se ha saludado en esta conversación
+        saludo_ya_dado = tracker.get_slot("saludo_dado")
+        
+        # Verificar si ya hay mensajes del bot en la conversación (indicando que no es el primer turno)
+        bot_events = [e for e in tracker.events if e.get('event') == 'bot']
+        if len(bot_events) > 0:  # Ya hay mensajes del bot
+            logger.info(f"Usuario desconocido - Ya hay {len(bot_events)} mensajes del bot, no mostrar saludo repetitivo")
+            return []
+        
+        if saludo_ya_dado:
+            # Si ya se saludó, no mostrar saludo repetitivo
+            logger.info("Usuario desconocido - Saludo ya dado, no mostrar saludo repetitivo")
+            return []
+        
+        # Solo saludar si es el primer turno y no se ha saludado
+        current_hour = datetime.now().hour
+        
+        if 5 <= current_hour < 12:
+            greeting = "¡Buenos días! Soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
+        elif 12 <= current_hour < 19:
+            greeting = "¡Buenas tardes! Soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
+        else:
+            greeting = "¡Buenas noches! Soy el asistente de Scotiabank, ¿en qué puedo ayudarte?"
+        
+        dispatcher.utter_message(text=greeting)
+        
+        # Marcar que ya se ha saludado
+        return [SlotSet("saludo_dado", True)]
+
 class ActionSaludoContextual(Action):
     """Acción para saludar según la hora del día"""
     
@@ -28,8 +118,15 @@ class ActionSaludoContextual(Action):
         # Verificar si ya se ha saludado en esta conversación
         saludo_ya_dado = tracker.get_slot("saludo_dado")
         
+        # Verificar si ya hay mensajes del bot en la conversación (indicando que no es el primer turno)
+        bot_events = [e for e in tracker.events if e.get('event') == 'bot']
+        if len(bot_events) > 0:  # Ya hay mensajes del bot
+            logger.info(f"Ya hay {len(bot_events)} mensajes del bot, no mostrar saludo repetitivo")
+            return []
+        
         if saludo_ya_dado:
             # Si ya se saludó, no mostrar saludo repetitivo
+            logger.info("Saludo ya dado, no mostrar saludo repetitivo")
             return []
         
         current_hour = datetime.now().hour

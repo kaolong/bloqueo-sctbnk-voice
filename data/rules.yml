@@ -5,3 +5,12 @@ rules:
     steps:
       - intent: bloquear_tarjeta
       - action: flow_bloqueo_tarjeta
+
+  - rule: Manejar Confirmación de Bloqueo
+    steps:
+      - intent: confirmar_bloqueo
+      - action: flow_continuar_bloqueo
+
+
+
+

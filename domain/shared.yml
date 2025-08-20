@@ -134,6 +134,10 @@ slots:
     mappings:
       - type: from_entity
         entity: blocked_card_name
+  usuario_desconocido:
+    type: bool
+    mappings:
+      - type: controlled
 
 # Configuración de intents
 intents:
@@ -163,6 +167,8 @@ actions:
   - utter_ask_confirmar_bloqueo
   - utter_collect_digitos
   - utter_collect_confirmar_bloqueo
+  - action_saludo_inteligente
+  - action_saludo_usuario_desconocido
   - action_saludo_contextual
   - action_solicitar_digitos
   - action_verificar_tarjeta

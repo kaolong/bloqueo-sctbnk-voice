@@ -4,7 +4,7 @@
 # Genera call_sid únicos automáticamente para evitar conflictos de contexto
 # Formatea el XML para mejor legibilidad
 # Incluye testing de identificación de clientes por número de teléfono
-
+clear
 # Función para mostrar uso del script
 show_usage() {
     echo "Uso: $0 [phone_number]"

@@ -21,7 +21,11 @@ load_dotenv()
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Consola
+        logging.FileHandler('/tmp/twilio_voice_server.log')  # Archivo
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -47,8 +51,14 @@ class TwilioVoiceHandler:
             'cursorclass': pymysql.cursors.DictCursor
         }
         
-        # Cache para evitar saludos duplicados
-        self.saludos_dados = set()
+        # Cache para evitar saludos duplicados por conversación
+        self.saludos_por_conversacion = {}
+        
+        # Cache global para evitar saludos duplicados en toda la sesión
+        self.saludos_globales = set()
+        
+        # Cache para mantener números de teléfono por call_sid
+        self.phone_numbers_by_call = {}
     
     def get_database_connection(self):
         """Crea una conexión a la base de datos MariaDB"""
@@ -141,8 +151,10 @@ class TwilioVoiceHandler:
         
         logger.info(f"📞 Llamada entrante: {call_sid} desde {from_number} a {to_number}")
         
-        # 🆕 IDENTIFICAR CLIENTE POR NÚMERO DE TELÉFONO
-        logger.info(f"🔍 Buscando cliente con teléfono: {from_number}")
+        # Guardar número de teléfono en cache para uso posterior
+        self.phone_numbers_by_call[call_sid] = from_number
+        
+        # Buscar cliente en base de datos
         customer = self.get_customer_by_phone(from_number)
         
         if customer:
@@ -183,6 +195,10 @@ class TwilioVoiceHandler:
             language=voice_config['language']
         )
         
+        # Marcar que ya se dio saludo en esta conversación
+        self.saludos_por_conversacion[call_sid] = True
+        logger.info(f"🎯 Saludo inicial marcado en cache para {call_sid}")
+        
         response.append(gather)
         
         # Redirigir a fallback si no hay input
@@ -190,16 +206,21 @@ class TwilioVoiceHandler:
         
         return str(response)
     
-    def handle_speech_input(self, call_sid: str, speech_input: str, confidence: float) -> str:
+    def handle_speech_input(self, call_sid: str, speech_input: str, confidence: float, from_number: str = None) -> str:
         """Maneja el input de voz del usuario"""
         logger.info(f"🎤 Input de voz recibido: {speech_input} (confianza: {confidence})")
         
-        # 🆕 BUSCAR CLIENTE POR CALL_SID (cache temporal)
-        # En una implementación real, esto debería persistir por sesión
-        customer = self.get_customer_by_phone("56982221070")  # Por ahora hardcodeado para testing
-        
-        if customer:
-            logger.info(f"👤 Procesando para Cliente: {customer['nombre_completo']}")
+        # Buscar cliente por número de teléfono del cache
+        customer = None
+        from_number = self.phone_numbers_by_call.get(call_sid)
+        if from_number:
+            customer = self.get_customer_by_phone(from_number)
+            if customer:
+                logger.info(f"👤 Procesando para Cliente: {customer['nombre_completo']}")
+            else:
+                logger.info(f"👤 Cliente no encontrado para teléfono: {from_number}")
+        else:
+            logger.warning("⚠️ No se encontró número de teléfono en cache para call_sid: {call_sid}")
         
         # Enviar a Rasa para procesamiento
         rasa_response = self.send_to_rasa(call_sid, speech_input, customer)
@@ -235,16 +256,32 @@ class TwilioVoiceHandler:
         
         return str(response)
     
+    def limpiar_cache_saludos(self, call_sid: str):
+        """Limpia el cache de saludos para una conversación específica"""
+        if call_sid in self.saludos_por_conversacion:
+            del self.saludos_por_conversacion[call_sid]
+            logger.info(f"🧹 Cache de saludos limpiado para conversación: {call_sid}")
+    
+    def limpiar_cache_conversacion(self, call_sid: str):
+        """Limpia todos los caches relacionados con una conversación específica"""
+        # Limpiar cache de saludos
+        if call_sid in self.saludos_por_conversacion:
+            del self.saludos_por_conversacion[call_sid]
+            logger.info(f"🧹 Cache de saludos limpiado para conversación: {call_sid}")
+        
+        # Limpiar cache de números de teléfono
+        if call_sid in self.phone_numbers_by_call:
+            del self.phone_numbers_by_call[call_sid]
+            logger.info(f"🧹 Cache de números de teléfono limpiado para conversación: {call_sid}")
+    
     def send_to_rasa(self, call_sid: str, message: str, customer: dict = None) -> str:
-        """Envía mensaje a Rasa y retorna la respuesta"""
+        """Envía mensaje a Rasa y retorna la respuesta procesada"""
         try:
-            # Preparar datos para Rasa
             rasa_data = {
                 'sender': call_sid,
                 'message': message
             }
             
-            # 🆕 AGREGAR INFORMACIÓN DEL CLIENTE SI ESTÁ DISPONIBLE
             if customer:
                 rasa_data['metadata'] = {
                     'customer_id': customer['id'],
@@ -257,42 +294,68 @@ class TwilioVoiceHandler:
             else:
                 logger.info(f"📤 Enviando a Rasa: {rasa_data}")
             
-            # Enviar a Rasa
-            response = requests.post(
-                self.rasa_webhook_url,
-                json=rasa_data,
-                headers={'Content-Type': 'application/json'},
-                timeout=10
-            )
+            response = requests.post(self.rasa_webhook_url, json=rasa_data)
+            response.raise_for_status()
             
-            if response.status_code == 200:
-                rasa_responses = response.json()
+            rasa_responses = response.json()
+            logger.info(f"📥 Rasa retornó {len(rasa_responses)} respuestas")
+            
+            if not rasa_responses:
+                logger.warning("⚠️ Rasa no retornó respuestas")
+                return "Lo siento, no pude procesar tu solicitud. Te voy a conectar con un ejecutivo."
+            
+            # Procesar y filtrar respuestas para evitar saludos duplicados
+            filtered_responses = []
+            
+            # Verificar si ya se dio un saludo en esta conversación
+            saludo_ya_dado = self.saludos_por_conversacion.get(call_sid, False)
+            logger.info(f"🎯 Estado del cache de saludos para {call_sid}: {'Ya se dio saludo' if saludo_ya_dado else 'No se ha dado saludo'}")
+            logger.info(f"🎯 Cache completo: {self.saludos_por_conversacion}")
+            
+            # Lógica inteligente para filtrar saludos duplicados
+            saludo_incluido = False
+            
+            for i, resp in enumerate(rasa_responses):
+                text = resp.get('text', '')
+                logger.info(f"📥 Respuesta {i+1}: {text}")
                 
-                if not rasa_responses:
-                    logger.warning("⚠️ Rasa retornó status 200: []")
-                    return None
+                # Detectar si es un saludo
+                es_saludo = any(palabra in text.lower() for palabra in ['buenos días', 'buenas tardes', 'buenas noches', 'soy el asistente'])
+                logger.info(f"🎯 ¿Es saludo? {es_saludo} - ¿Ya se dio saludo? {saludo_ya_dado} - ¿Saludo incluido? {saludo_incluido}")
                 
-                # Combinar todas las respuestas de Rasa
-                if len(rasa_responses) == 1:
-                    final_response = rasa_responses[0].get('text', '')
-                    logger.info(f"📥 Respuesta única: {final_response}")
+                if es_saludo:
+                    # Para TODOS los usuarios (conocidos y desconocidos), filtrar saludos después del primero
+                    if saludo_ya_dado:
+                        # Ya se dio saludo en esta conversación, filtrarlo
+                        logger.info(f"🚫 Filtrando saludo repetitivo para {'usuario conocido' if customer else 'usuario desconocido'}: {text}")
+                        continue
+                    else:
+                        # Primer saludo de la conversación, incluirlo
+                        saludo_incluido = True
+                        self.saludos_por_conversacion[call_sid] = True
+                        logger.info(f"🎯 Primer saludo de la conversación incluido para {'usuario conocido' if customer else 'usuario desconocido'}: {text}")
+                        filtered_responses.append(text)
                 else:
-                    # Combinar múltiples respuestas
-                    combined_response = ' '.join([resp.get('text', '') for resp in rasa_responses])
-                    logger.info(f"📥 Rasa retornó {len(rasa_responses)} respuestas")
-                    for i, resp in enumerate(rasa_responses, 1):
-                        logger.info(f"📥 Respuesta {i}: {resp.get('text', '')}")
-                    logger.info(f"📥 Respuesta combinada: {combined_response}")
-                    final_response = combined_response
-                
-                return final_response
+                    # No es saludo, incluir siempre
+                    filtered_responses.append(text)
+            
+            # Combinar respuestas filtradas
+            if filtered_responses:
+                combined_response = " ".join(filtered_responses)
+                logger.info(f"📥 Respuesta combinada (filtrada): {combined_response}")
+                return combined_response
             else:
-                logger.error(f"❌ Error de Rasa: {response.status_code} - {response.text}")
-                return None
+                # Si todas las respuestas fueron filtradas, usar la primera original
+                first_response = rasa_responses[0].get('text', '')
+                logger.info(f"📥 Usando primera respuesta (filtrado falló): {first_response}")
+                return first_response
                 
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"❌ Error enviando a Rasa: {e}")
-            return None
+            return "Lo siento, hay un problema técnico. Te voy a conectar con un ejecutivo."
+        except Exception as e:
+            logger.error(f"❌ Error inesperado: {e}")
+            return "Lo siento, ocurrió un error inesperado. Te voy a conectar con un ejecutivo."
     
     def handle_fallback(self, call_sid: str) -> str:
         """Maneja casos donde no hay input del usuario"""
@@ -319,8 +382,12 @@ class TwilioVoiceHandler:
         
         if call_status == 'completed':
             logger.info(f"✅ Llamada {call_sid} completada exitosamente")
+            # Limpiar cache cuando termine la llamada
+            self.limpiar_cache_conversacion(call_sid)
         elif call_status == 'failed':
             logger.error(f"❌ Llamada {call_sid} falló")
+            # Limpiar cache si falló
+            self.limpiar_cache_conversacion(call_sid)
         elif call_status == 'busy':
             logger.warning(f"⏳ Llamada {call_sid} ocupada")
         
